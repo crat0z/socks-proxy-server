@@ -8,6 +8,8 @@ use nom::{
     IResult,
 };
 
+use nom::Err::Error;
+
 use crate::error::MyError;
 use crate::socks::*;
 
@@ -105,7 +107,7 @@ fn socks5_dstaddr(i: &[u8]) -> IResult<&[u8], IP, MyError> {
         if let Ok(domain) = String::from_utf8(addr) {
             Ok((remaining, IP::Name(domain)))
         } else {
-            panic!();
+            Err(Error(MyError::Parse))
         }
     } else {
         let (remaining, addr) = take(16u8)(remaining)?;
@@ -131,7 +133,7 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
 
             if !remaining.is_empty() {
                 // should be empty
-                panic!();
+                return Err(Error(MyError::Parse));
             }
 
             if let Ok(name) = String::from_utf8(domain.to_vec()) {
@@ -140,7 +142,7 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
                     port,
                 };
             } else {
-                panic!();
+                return Err(Error(MyError::Parse));
             }
         } else {
             dest = Destination {
@@ -162,7 +164,7 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
 
         if !remaining.is_empty() {
             // should be empty
-            panic!();
+            return Err(Error(MyError::Parse));
         }
 
         Ok((remaining, SOCKSInit::V5(SOCKS5Init { auth_methods })))
@@ -173,7 +175,7 @@ pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, My
     let (remaining, (ver, id, pw)) = tuple((socks5_auth_ver, socks5_id, socks5_pw))(input)?;
 
     if !remaining.is_empty() {
-        panic!();
+        return Err(Error(MyError::Parse));
     }
 
     Ok((remaining, SOCKS5AuthRequest { ver, id, pw }))
@@ -189,7 +191,7 @@ pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5Connectio
     ))(input)?;
 
     if !remaining.is_empty() {
-        panic!();
+        return Err(Error(MyError::Parse));
     }
 
     let dest = Destination { ip, port };
