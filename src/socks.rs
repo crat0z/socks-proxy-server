@@ -35,8 +35,14 @@ impl From<Destination> for String {
 }
 
 #[derive(Debug)]
+pub enum SOCKS4Cmd {
+    CONNECT,
+    BIND,
+}
+
+#[derive(Debug)]
 pub struct SOCKS4Init {
-    pub cmd: u8,
+    pub cmd: SOCKS4Cmd,
     pub ident: Vec<u8>,
     pub dest: Destination,
 }
@@ -60,7 +66,14 @@ pub struct SOCKS5AuthRequest {
 }
 
 #[derive(Debug)]
+pub enum SOCKS5Cmd {
+    CONNECT,
+    BIND,
+    UDP,
+}
+
+#[derive(Debug)]
 pub struct SOCKS5ConnectionRequest {
-    pub cmd: u8,
+    pub cmd: SOCKS5Cmd,
     pub dest: Destination,
 }

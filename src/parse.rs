@@ -27,9 +27,14 @@ fn socks_ver(i: &[u8]) -> IResult<&[u8], u8, MyError> {
     Ok((remaining, result[0]))
 }
 
-fn socks4_cmd(i: &[u8]) -> IResult<&[u8], u8, MyError> {
+fn socks4_cmd(i: &[u8]) -> IResult<&[u8], SOCKS4Cmd, MyError> {
     let (remaining, result) = alt((tag(b"\x01"), tag(b"\x02")))(i)?;
-    Ok((remaining, result[0]))
+    // 0x01 is connect, 0x02 is bind
+    if result[0] == 1 {
+        Ok((remaining, SOCKS4Cmd::CONNECT))
+    } else {
+        Ok((remaining, SOCKS4Cmd::BIND))
+    }
 }
 
 fn socks4_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
@@ -69,9 +74,17 @@ fn socks5_pw(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     take_u8_len_vec(i)
 }
 
-fn socks5_cmd(i: &[u8]) -> IResult<&[u8], u8, MyError> {
-    let (remaining, cmd) = alt((tag(b"\x01"), tag(b"\x02"), tag(b"\x03")))(i)?;
-    Ok((remaining, cmd[0]))
+fn socks5_cmd(i: &[u8]) -> IResult<&[u8], SOCKS5Cmd, MyError> {
+    let (remaining, result) = alt((tag(b"\x01"), tag(b"\x02"), tag(b"\x03")))(i)?;
+
+    // 1 is connect, 2 is bind, 3 is udp
+    if result[0] == 1 {
+        Ok((remaining, SOCKS5Cmd::CONNECT))
+    } else if result[0] == 2 {
+        Ok((remaining, SOCKS5Cmd::BIND))
+    } else {
+        Ok((remaining, SOCKS5Cmd::UDP))
+    }
 }
 
 fn socks5_rsv(i: &[u8]) -> IResult<&[u8], (), MyError> {
