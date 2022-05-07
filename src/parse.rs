@@ -8,77 +8,78 @@ use nom::{
     IResult,
 };
 
+use crate::error::MyError;
 use crate::socks::*;
 
-fn take_until_null_consume(i: &[u8]) -> IResult<&[u8], &[u8], ()> {
+fn take_until_null_consume(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
     let (remaining, result) = take_until("\0")(i)?;
     // remaining[0] at this point is start of s, so skip len of s
 
     Ok((&remaining[1..], result))
 }
 
-fn take_u8_len_vec(i: &[u8]) -> IResult<&[u8], Vec<u8>, ()> {
+fn take_u8_len_vec(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     length_count(number_u8, number_u8)(i)
 }
 
-fn socks_ver(i: &[u8]) -> IResult<&[u8], u8, ()> {
+fn socks_ver(i: &[u8]) -> IResult<&[u8], u8, MyError> {
     let (remaining, result) = alt((tag(b"\x04"), tag(b"\x05")))(i)?;
     Ok((remaining, result[0]))
 }
 
-fn socks4_cmd(i: &[u8]) -> IResult<&[u8], u8, ()> {
+fn socks4_cmd(i: &[u8]) -> IResult<&[u8], u8, MyError> {
     let (remaining, result) = alt((tag(b"\x01"), tag(b"\x02")))(i)?;
     Ok((remaining, result[0]))
 }
 
-fn socks4_dstport(i: &[u8]) -> IResult<&[u8], u16, ()> {
+fn socks4_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
     be_u16(i)
 }
 
-fn socks4_dstip(i: &[u8]) -> IResult<&[u8], &[u8], ()> {
+fn socks4_dstip(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
     take(4u8)(i)
 }
 
-fn socks4_id(i: &[u8]) -> IResult<&[u8], &[u8], ()> {
+fn socks4_id(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
     take_until_null_consume(i)
 }
 
-fn socks4_domain(i: &[u8]) -> IResult<&[u8], &[u8], ()> {
+fn socks4_domain(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
     take_until_null_consume(i)
 }
 
-fn socks5_ver(i: &[u8]) -> IResult<&[u8], (), ()> {
+fn socks5_ver(i: &[u8]) -> IResult<&[u8], (), MyError> {
     let (remaining, _) = tag(b"\x05")(i)?;
     Ok((remaining, ()))
 }
 
-fn socks5_auth_methods(i: &[u8]) -> IResult<&[u8], Vec<u8>, ()> {
+fn socks5_auth_methods(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     take_u8_len_vec(i)
 }
 
-fn socks5_auth_ver(i: &[u8]) -> IResult<&[u8], u8, ()> {
+fn socks5_auth_ver(i: &[u8]) -> IResult<&[u8], u8, MyError> {
     number_u8(i)
 }
 
-fn socks5_id(i: &[u8]) -> IResult<&[u8], Vec<u8>, ()> {
+fn socks5_id(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     take_u8_len_vec(i)
 }
 
-fn socks5_pw(i: &[u8]) -> IResult<&[u8], Vec<u8>, ()> {
+fn socks5_pw(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     take_u8_len_vec(i)
 }
 
-fn socks5_cmd(i: &[u8]) -> IResult<&[u8], u8, ()> {
+fn socks5_cmd(i: &[u8]) -> IResult<&[u8], u8, MyError> {
     let (remaining, cmd) = alt((tag(b"\x01"), tag(b"\x02"), tag(b"\x03")))(i)?;
     Ok((remaining, cmd[0]))
 }
 
-fn socks5_rsv(i: &[u8]) -> IResult<&[u8], (), ()> {
+fn socks5_rsv(i: &[u8]) -> IResult<&[u8], (), MyError> {
     let (remaining, _) = tag(b"\x00")(i)?;
     Ok((remaining, ()))
 }
 
-fn socks5_dstaddr(i: &[u8]) -> IResult<&[u8], IP, ()> {
+fn socks5_dstaddr(i: &[u8]) -> IResult<&[u8], IP, MyError> {
     let (remaining, addrtype) = alt((tag(b"\x01"), tag(b"\x03"), tag(b"\x04")))(i)?;
 
     // ipv4
@@ -99,11 +100,11 @@ fn socks5_dstaddr(i: &[u8]) -> IResult<&[u8], IP, ()> {
     }
 }
 
-fn socks5_dstport(i: &[u8]) -> IResult<&[u8], u16, ()> {
+fn socks5_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
     be_u16(i)
 }
 
-pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, ()> {
+pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
     let (remaining, ver) = socks_ver(input)?;
 
     if ver == 4 {
@@ -155,7 +156,7 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, ()> {
     }
 }
 
-pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, ()> {
+pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, MyError> {
     let (remaining, (ver, id, pw)) = tuple((socks5_auth_ver, socks5_id, socks5_pw))(input)?;
 
     if !remaining.is_empty() {
@@ -165,7 +166,7 @@ pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, ()
     Ok((remaining, SOCKS5AuthRequest { ver, id, pw }))
 }
 
-pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5ConnectionRequest, ()> {
+pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5ConnectionRequest, MyError> {
     let (remaining, (_, cmd, _, ip, port)) = tuple((
         socks5_ver,
         socks5_cmd,
