@@ -10,6 +10,8 @@ pub enum MyError {
     Parse,
     #[error("TimeoutError")]
     Timeout,
+    #[error("NetworkError")]
+    Network,
     #[error("UnknownError")]
     Unknown,
 }

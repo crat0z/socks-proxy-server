@@ -37,10 +37,10 @@ async fn handle_socks5(mut stream: TcpStream, init: SOCKS5Init) -> Result<(), My
 }
 
 async fn handle_socks4(mut stream: TcpStream, init: SOCKS4Init) -> Result<(), MyError> {
+    let mut msg: [u8; 8] = [0; 8];
+
     match init.cmd {
         SOCKS4Cmd::Connect => {
-            let mut msg: [u8; 8] = [0; 8];
-
             // apparently timeout is 2 mins for connection establishment
             match timeout(
                 Duration::from_secs(120),

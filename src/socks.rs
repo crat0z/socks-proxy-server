@@ -35,6 +35,12 @@ impl From<Destination> for String {
 }
 
 #[derive(Debug)]
+pub enum SOCKS {
+    V4,
+    V5,
+}
+
+#[derive(Debug)]
 pub enum SOCKS4Cmd {
     Connect,
     Bind,

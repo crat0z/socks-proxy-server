@@ -24,9 +24,13 @@ fn take_u8_len_vec(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
     length_count(number_u8, number_u8)(i)
 }
 
-fn socks_ver(i: &[u8]) -> IResult<&[u8], u8, MyError> {
+fn socks_ver(i: &[u8]) -> IResult<&[u8], SOCKS, MyError> {
     let (remaining, result) = alt((tag(b"\x04"), tag(b"\x05")))(i)?;
-    Ok((remaining, result[0]))
+    if result[0] == 4 {
+        Ok((remaining, SOCKS::V4))
+    } else {
+        Ok((remaining, SOCKS::V5))
+    }
 }
 
 fn socks4_cmd(i: &[u8]) -> IResult<&[u8], SOCKS4Cmd, MyError> {
@@ -122,52 +126,55 @@ fn socks5_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
 pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
     let (remaining, ver) = socks_ver(input)?;
 
-    if ver == 4 {
-        let (remaining, (cmd, port, ip, id)) =
-            tuple((socks4_cmd, socks4_dstport, socks4_dstip, socks4_id))(remaining)?;
+    match ver {
+        SOCKS::V4 => {
+            let (remaining, (cmd, port, ip, id)) =
+                tuple((socks4_cmd, socks4_dstport, socks4_dstip, socks4_id))(remaining)?;
 
-        let dest;
+            let dest;
 
-        if ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] != 0 {
-            let (remaining, domain) = socks4_domain(remaining)?;
+            if ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] != 0 {
+                let (remaining, domain) = socks4_domain(remaining)?;
+
+                if !remaining.is_empty() {
+                    // should be empty
+                    return Err(Error(MyError::Parse));
+                }
+
+                if let Ok(name) = String::from_utf8(domain.to_vec()) {
+                    dest = Destination {
+                        ip: IP::Name(name),
+                        port,
+                    };
+                } else {
+                    return Err(Error(MyError::Parse));
+                }
+            } else {
+                dest = Destination {
+                    ip: IP::V4(<[u8; 4]>::try_from(ip).unwrap()),
+                    port,
+                }
+            }
+
+            Ok((
+                remaining,
+                SOCKSInit::V4(SOCKS4Init {
+                    cmd,
+                    ident: Vec::from(id),
+                    dest,
+                }),
+            ))
+        }
+        SOCKS::V5 => {
+            let (remaining, auth_methods) = socks5_auth_methods(remaining)?;
 
             if !remaining.is_empty() {
                 // should be empty
                 return Err(Error(MyError::Parse));
             }
 
-            if let Ok(name) = String::from_utf8(domain.to_vec()) {
-                dest = Destination {
-                    ip: IP::Name(name),
-                    port,
-                };
-            } else {
-                return Err(Error(MyError::Parse));
-            }
-        } else {
-            dest = Destination {
-                ip: IP::V4(<[u8; 4]>::try_from(ip).unwrap()),
-                port,
-            }
+            Ok((remaining, SOCKSInit::V5(SOCKS5Init { auth_methods })))
         }
-
-        Ok((
-            remaining,
-            SOCKSInit::V4(SOCKS4Init {
-                cmd,
-                ident: Vec::from(id),
-                dest,
-            }),
-        ))
-    } else {
-        let (remaining, auth_methods) = socks5_auth_methods(remaining)?;
-
-        if !remaining.is_empty() {
-            // should be empty
-            return Err(Error(MyError::Parse));
-        }
-
-        Ok((remaining, SOCKSInit::V5(SOCKS5Init { auth_methods })))
     }
 }
 
