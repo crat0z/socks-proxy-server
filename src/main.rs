@@ -8,19 +8,64 @@ use std::time::Duration;
 
 use crate::error::MyError;
 use crate::parse::socks_init;
-use crate::socks::{SOCKS4Init, SOCKS5Init, SOCKSInit};
-use nom_bufreader::async_bufreader::BufReader;
+use crate::socks::{SOCKS4Cmd, SOCKS4Init, SOCKS5Init, SOCKSInit};
 use nom_bufreader::AsyncParse;
+use tokio::io::{copy, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_util::compat::TokioAsyncReadCompatExt;
 
-async fn handle_socks5(stream: TcpStream, init: SOCKS5Init) -> Result<(), MyError> {
+async fn run_connection(mut client: TcpStream, mut server: TcpStream) {
+    let (mut cr, mut cw) = client.split();
+    let (mut sr, mut sw) = server.split();
+
+    let client_to_server = async {
+        copy(&mut cr, &mut sw).await?;
+        sw.shutdown().await
+    };
+
+    let server_to_client = async {
+        copy(&mut sr, &mut cw).await?;
+        cw.shutdown().await
+    };
+
+    tokio::try_join!(client_to_server, server_to_client);
+}
+
+async fn handle_socks5(mut stream: TcpStream, init: SOCKS5Init) -> Result<(), MyError> {
     Ok(())
 }
 
-async fn handle_socks4(stream: TcpStream, init: SOCKS4Init) -> Result<(), MyError> {
-    Ok(())
+async fn handle_socks4(mut stream: TcpStream, init: SOCKS4Init) -> Result<(), MyError> {
+    let duration = Duration::from_secs(5);
+
+    match init.cmd {
+        SOCKS4Cmd::CONNECT => {
+            let mut msg: [u8; 8] = [0; 8];
+
+            match timeout(duration, TcpStream::connect(String::from(init.dest))).await? {
+                Ok(forward) => {
+                    // connection accepted
+                    msg[1] = 0x5a;
+                    stream.write(msg.as_slice()).await?;
+
+                    run_connection(stream, forward).await;
+
+                    Ok(())
+                }
+                Err(e) => {
+                    // connection failed
+                    // send rejection msg
+                    msg[1] = 0x5b;
+                    stream.write(msg.as_slice()).await?;
+                    Err(MyError::from(e))
+                }
+            }
+        }
+        SOCKS4Cmd::BIND => {
+            unimplemented!();
+        }
+    }
 }
 
 async fn handle_connection(stream: TcpStream) -> Result<(), MyError> {
