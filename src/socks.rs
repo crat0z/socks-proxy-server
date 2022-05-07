@@ -36,8 +36,8 @@ impl From<Destination> for String {
 
 #[derive(Debug)]
 pub enum SOCKS4Cmd {
-    CONNECT,
-    BIND,
+    Connect,
+    Bind,
 }
 
 #[derive(Debug)]

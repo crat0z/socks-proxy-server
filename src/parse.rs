@@ -31,9 +31,9 @@ fn socks4_cmd(i: &[u8]) -> IResult<&[u8], SOCKS4Cmd, MyError> {
     let (remaining, result) = alt((tag(b"\x01"), tag(b"\x02")))(i)?;
     // 0x01 is connect, 0x02 is bind
     if result[0] == 1 {
-        Ok((remaining, SOCKS4Cmd::CONNECT))
+        Ok((remaining, SOCKS4Cmd::Connect))
     } else {
-        Ok((remaining, SOCKS4Cmd::BIND))
+        Ok((remaining, SOCKS4Cmd::Bind))
     }
 }
 
