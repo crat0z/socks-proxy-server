@@ -1,34 +1,35 @@
+use std::net::IpAddr;
+
 #[derive(Debug)]
-pub enum IP {
-    V4([u8; 4]),
-    V6([u8; 16]),
+pub enum Address {
     Name(String),
+    IP(IpAddr),
 }
 
 #[derive(Debug)]
 pub struct Destination {
-    pub ip: IP,
+    pub addr: Address,
     pub port: u16,
+}
+
+impl Destination {
+    pub fn ipv4_slice(&self) -> Option<[u8; 4]> {
+        if let Address::IP(IpAddr::V4(ip)) = &self.addr {
+            Some(ip.octets())
+        } else {
+            None
+        }
+    }
 }
 
 impl From<Destination> for String {
     fn from(dest: Destination) -> Self {
-        match dest.ip {
-            IP::V4(ip) => {
-                format!("{}.{}.{}.{}:{}", ip[0], ip[1], ip[2], ip[3], dest.port)
-            }
-            IP::Name(name) => {
+        match dest.addr {
+            Address::Name(name) => {
                 format!("{}:{}", name, dest.port)
             }
-            IP::V6(ip) => {
-                let mut s = String::new();
-
-                for i in ip.iter() {
-                    // this is gross
-                    s += &*format!("{:x}:", i);
-                }
-
-                format!("{}{}", s, dest.port)
+            Address::IP(ip) => {
+                format!("{}:{}", ip.to_string(), dest.port)
             }
         }
     }

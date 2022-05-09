@@ -12,3 +12,4 @@ nom-bufreader = {features = ["async"], git = "https://github.com/cheako/nom-bufr
 nom = "7"
 futures-util = { version = "0", features = ["io"] }
 thiserror = "1"
+replace_with = "0"

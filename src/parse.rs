@@ -1,16 +1,18 @@
 use nom::multi::length_count;
-use nom::number::streaming::be_u16;
-use nom::number::streaming::u8 as number_u8;
+use nom::number::streaming::{be_u128, u8 as number_u8};
+use nom::number::streaming::{be_u16, be_u32};
 use nom::sequence::tuple;
 use nom::{
     branch::alt,
-    bytes::streaming::{tag, take, take_until},
+    bytes::streaming::{tag, take_until},
     IResult,
 };
 
 use nom::Err::Error;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::error::MyError;
+use crate::socks::Address::IP;
 use crate::socks::*;
 
 fn take_until_null_consume(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
@@ -26,6 +28,7 @@ fn take_u8_len_vec(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
 
 fn socks_ver(i: &[u8]) -> IResult<&[u8], SOCKS, MyError> {
     let (remaining, result) = alt((tag(b"\x04"), tag(b"\x05")))(i)?;
+
     if result[0] == 4 {
         Ok((remaining, SOCKS::V4))
     } else {
@@ -43,16 +46,18 @@ fn socks4_cmd(i: &[u8]) -> IResult<&[u8], SOCKS4Cmd, MyError> {
     }
 }
 
-fn socks4_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
-    be_u16(i)
+fn socks4_dst(i: &[u8]) -> IResult<&[u8], Destination, MyError> {
+    let (remaining, port) = be_u16(i)?;
+    let (remaining, data) = be_u32(remaining)?;
+
+    let addr = IP(IpAddr::from(Ipv4Addr::from(data)));
+
+    Ok((remaining, Destination { addr, port }))
 }
 
-fn socks4_dstip(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
-    take(4u8)(i)
-}
-
-fn socks4_id(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
-    take_until_null_consume(i)
+fn socks4_id(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
+    let (remaining, result) = take_until_null_consume(i)?;
+    Ok((remaining, result.to_vec()))
 }
 
 fn socks4_domain(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
@@ -98,29 +103,41 @@ fn socks5_rsv(i: &[u8]) -> IResult<&[u8], (), MyError> {
     Ok((remaining, ()))
 }
 
-fn socks5_dstaddr(i: &[u8]) -> IResult<&[u8], IP, MyError> {
+fn socks5_dst(i: &[u8]) -> IResult<&[u8], Destination, MyError> {
     let (remaining, addrtype) = alt((tag(b"\x01"), tag(b"\x03"), tag(b"\x04")))(i)?;
 
-    // ipv4
     if addrtype[0] == 1 {
-        let (remaining, addr) = take(4u8)(remaining)?;
-        Ok((remaining, IP::V4(<[u8; 4]>::try_from(addr).unwrap())))
+        let (remaining, data) = be_u32(remaining)?;
+
+        let addr = IP(IpAddr::from(Ipv4Addr::from(data)));
+
+        let (remaining, port) = be_u16(remaining)?;
+
+        Ok((remaining, Destination { addr, port }))
     } else if addrtype[0] == 3 {
         let (remaining, addr) = take_u8_len_vec(remaining)?;
 
         if let Ok(domain) = String::from_utf8(addr) {
-            Ok((remaining, IP::Name(domain)))
+            let (remaining, port) = be_u16(remaining)?;
+            Ok((
+                remaining,
+                Destination {
+                    addr: Address::Name(domain),
+                    port,
+                },
+            ))
         } else {
             Err(Error(MyError::Parse))
         }
     } else {
-        let (remaining, addr) = take(16u8)(remaining)?;
-        Ok((remaining, IP::V6(<[u8; 16]>::try_from(addr).unwrap())))
-    }
-}
+        let (remaining, addr) = be_u128(remaining)?;
 
-fn socks5_dstport(i: &[u8]) -> IResult<&[u8], u16, MyError> {
-    be_u16(i)
+        let addr = IP(IpAddr::from(Ipv6Addr::from(addr)));
+
+        let (remaining, port) = be_u16(remaining)?;
+
+        Ok((remaining, Destination { addr, port }))
+    }
 }
 
 pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
@@ -128,10 +145,10 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
 
     match ver {
         SOCKS::V4 => {
-            let (remaining, (cmd, port, ip, id)) =
-                tuple((socks4_cmd, socks4_dstport, socks4_dstip, socks4_id))(remaining)?;
+            let (remaining, (cmd, mut dest, ident)) =
+                tuple((socks4_cmd, socks4_dst, socks4_id))(remaining)?;
 
-            let dest;
+            let ip = dest.ipv4_slice().unwrap();
 
             if ip[0] == 0 && ip[1] == 0 && ip[2] == 0 && ip[3] != 0 {
                 let (remaining, domain) = socks4_domain(remaining)?;
@@ -142,28 +159,13 @@ pub fn socks_init(input: &[u8]) -> IResult<&[u8], SOCKSInit, MyError> {
                 }
 
                 if let Ok(name) = String::from_utf8(domain.to_vec()) {
-                    dest = Destination {
-                        ip: IP::Name(name),
-                        port,
-                    };
+                    dest.addr = Address::Name(name);
                 } else {
                     return Err(Error(MyError::Parse));
                 }
-            } else {
-                dest = Destination {
-                    ip: IP::V4(<[u8; 4]>::try_from(ip).unwrap()),
-                    port,
-                }
             }
 
-            Ok((
-                remaining,
-                SOCKSInit::V4(SOCKS4Init {
-                    cmd,
-                    ident: Vec::from(id),
-                    dest,
-                }),
-            ))
+            Ok((remaining, SOCKSInit::V4(SOCKS4Init { cmd, ident, dest })))
         }
         SOCKS::V5 => {
             let (remaining, auth_methods) = socks5_auth_methods(remaining)?;
@@ -189,19 +191,12 @@ pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, My
 }
 
 pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5ConnectionRequest, MyError> {
-    let (remaining, (_, cmd, _, ip, port)) = tuple((
-        socks5_ver,
-        socks5_cmd,
-        socks5_rsv,
-        socks5_dstaddr,
-        socks5_dstport,
-    ))(input)?;
+    let (remaining, (_, cmd, _, dest)) =
+        tuple((socks5_ver, socks5_cmd, socks5_rsv, socks5_dst))(input)?;
 
     if !remaining.is_empty() {
         return Err(Error(MyError::Parse));
     }
-
-    let dest = Destination { ip, port };
 
     Ok((remaining, SOCKS5ConnectionRequest { cmd, dest }))
 }

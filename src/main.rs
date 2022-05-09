@@ -1,3 +1,6 @@
+extern crate core;
+
+mod client;
 mod error;
 mod parse;
 mod socks;
@@ -6,39 +9,43 @@ use futures_util::io::BufReader as IoBufReader;
 
 use std::time::Duration;
 
+use crate::client::Client;
 use crate::error::MyError;
-use crate::parse::socks_init;
-use crate::socks::{SOCKS4Cmd, SOCKS4Init, SOCKS5Init, SOCKSInit};
+use crate::parse::{socks5_auth_request, socks5_connection_request, socks_init};
+use crate::socks::{
+    SOCKS4Cmd, SOCKS4Init, SOCKS5Cmd, SOCKS5ConnectionRequest, SOCKS5Init, SOCKSInit,
+};
 use nom_bufreader::AsyncParse;
-use tokio::io::{copy, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
-use tokio_util::compat::TokioAsyncReadCompatExt;
 
-async fn run_connection(mut client: TcpStream, mut server: TcpStream) {
-    let (mut cr, mut cw) = client.split();
-    let (mut sr, mut sw) = server.split();
+async fn handle_socks5(mut client: Client, init: SOCKS5Init) -> Result<(), MyError> {
+    // just accept no authentication for now..
 
-    let client_to_server = async {
-        copy(&mut cr, &mut sw).await?;
-        sw.shutdown().await
-    };
+    if init.auth_methods.contains(&0u8) {
+        let req = timeout(
+            Duration::from_secs(120),
+            client.parser().parse(socks5_connection_request),
+        )
+        .await??;
 
-    let server_to_client = async {
-        copy(&mut sr, &mut cw).await?;
-        cw.shutdown().await
-    };
-
-    tokio::try_join!(client_to_server, server_to_client);
-}
-
-async fn handle_socks5(mut stream: TcpStream, init: SOCKS5Init) -> Result<(), MyError> {
+        match req.cmd {
+            SOCKS5Cmd::CONNECT => {
+                unimplemented!();
+            }
+            SOCKS5Cmd::BIND => {
+                unimplemented!();
+            }
+            SOCKS5Cmd::UDP => {
+                unimplemented!();
+            }
+        }
+    } else {
+    }
     Ok(())
 }
 
-async fn handle_socks4(mut stream: TcpStream, init: SOCKS4Init) -> Result<(), MyError> {
-    let mut msg: [u8; 8] = [0; 8];
-
+async fn handle_socks4(mut client: Client, init: SOCKS4Init) -> Result<(), MyError> {
     match init.cmd {
         SOCKS4Cmd::Connect => {
             // apparently timeout is 2 mins for connection establishment
@@ -50,18 +57,14 @@ async fn handle_socks4(mut stream: TcpStream, init: SOCKS4Init) -> Result<(), My
             {
                 Ok(forward) => {
                     // connection accepted
-                    msg[1] = 0x5a;
-                    stream.write(msg.as_slice()).await?;
-
-                    run_connection(stream, forward).await;
+                    client.socks4_connect_reply(true).await?;
+                    client.run_connection(forward).await?;
 
                     Ok(())
                 }
                 Err(e) => {
                     // connection failed
-                    // send rejection msg
-                    msg[1] = 0x5b;
-                    stream.write(msg.as_slice()).await?;
+                    client.socks4_connect_reply(false).await?;
                     Err(MyError::from(e))
                 }
             }
@@ -72,12 +75,10 @@ async fn handle_socks4(mut stream: TcpStream, init: SOCKS4Init) -> Result<(), My
     }
 }
 
-async fn handle_connection(stream: TcpStream) -> Result<(), MyError> {
-    let mut reader = IoBufReader::new(stream.compat());
-
-    match timeout(Duration::from_secs(5), reader.parse(socks_init)).await?? {
-        SOCKSInit::V4(init) => handle_socks4(reader.into_inner().into_inner(), init).await,
-        SOCKSInit::V5(init) => handle_socks5(reader.into_inner().into_inner(), init).await,
+async fn handle_connection(mut client: Client) -> Result<(), MyError> {
+    match client.socks_init().await? {
+        SOCKSInit::V4(init) => handle_socks4(client, init).await,
+        SOCKSInit::V5(init) => handle_socks5(client, init).await,
     }
 }
 
@@ -89,7 +90,9 @@ async fn main() {
         match listener.accept().await {
             Ok((stream, _)) => {
                 tokio::spawn(async move {
-                    handle_connection(stream).await;
+                    if let Err(e) = handle_connection(Client::new(stream)).await {
+                        dbg!("{}", e);
+                    }
                 });
             }
             Err(e) => {
