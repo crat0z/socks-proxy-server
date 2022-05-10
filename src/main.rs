@@ -13,9 +13,9 @@ use crate::client::Client;
 use crate::error::MyError;
 use crate::parse::{socks5_auth_request, socks5_connection_request, socks_init};
 use crate::socks::{
-    SOCKS4Cmd, SOCKS4Init, SOCKS5Cmd, SOCKS5ConnectionRequest, SOCKS5Init, SOCKSInit,
+    SOCKS4Cmd, SOCKS4Init, SOCKS5AuthReply, SOCKS5Cmd, SOCKS5ConnectReply, SOCKS5ConnectRequest,
+    SOCKS5Init, SOCKSInit,
 };
-use nom_bufreader::AsyncParse;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 
@@ -23,24 +23,56 @@ async fn handle_socks5(mut client: Client, init: SOCKS5Init) -> Result<(), MyErr
     // just accept no authentication for now..
 
     if init.auth_methods.contains(&0u8) {
-        let req = timeout(
-            Duration::from_secs(120),
-            client.parser().parse(socks5_connection_request),
-        )
-        .await??;
+        client.socks5_auth_reply(SOCKS5AuthReply::Accepted).await?;
 
-        match req.cmd {
-            SOCKS5Cmd::CONNECT => {
-                unimplemented!();
+        let req = client.socks5_connection_request().await?;
+
+        return match req.cmd {
+            SOCKS5Cmd::Connect => {
+                match timeout(
+                    Duration::from_secs(120),
+                    TcpStream::connect(String::from(req.dest)),
+                )
+                .await?
+                {
+                    Ok(server) => {
+                        let socket_addr = server.local_addr()?;
+                        client
+                            .socks5_connection_reply(
+                                SOCKS5ConnectReply::Accepted,
+                                Some(socket_addr.ip()),
+                                Some(socket_addr.port()),
+                            )
+                            .await?;
+
+                        client.run_connection(server).await?;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // should match on err.kind() instead
+                        client
+                            .socks5_connection_reply(SOCKS5ConnectReply::Failure, None, None)
+                            .await?;
+
+                        Err(e.into())
+                    }
+                }
             }
-            SOCKS5Cmd::BIND => {
-                unimplemented!();
+            SOCKS5Cmd::Bind => {
+                client
+                    .socks5_connection_reply(SOCKS5ConnectReply::CommandNotSupported, None, None)
+                    .await?;
+                Ok(())
             }
             SOCKS5Cmd::UDP => {
-                unimplemented!();
+                client
+                    .socks5_connection_reply(SOCKS5ConnectReply::CommandNotSupported, None, None)
+                    .await?;
+                Ok(())
             }
-        }
+        };
     } else {
+        client.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
     }
     Ok(())
 }
@@ -65,12 +97,13 @@ async fn handle_socks4(mut client: Client, init: SOCKS4Init) -> Result<(), MyErr
                 Err(e) => {
                     // connection failed
                     client.socks4_connect_reply(false).await?;
-                    Err(MyError::from(e))
+                    Err(e.into())
                 }
             }
         }
         SOCKS4Cmd::Bind => {
-            unimplemented!();
+            client.socks4_connect_reply(false).await?;
+            Ok(())
         }
     }
 }

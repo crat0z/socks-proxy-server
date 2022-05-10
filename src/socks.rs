@@ -20,6 +20,14 @@ impl Destination {
             None
         }
     }
+
+    pub fn ipv6_slice(&self) -> Option<[u8; 16]> {
+        if let Address::IP(IpAddr::V6(ip)) = &self.addr {
+            Some(ip.octets())
+        } else {
+            None
+        }
+    }
 }
 
 impl From<Destination> for String {
@@ -29,22 +37,24 @@ impl From<Destination> for String {
                 format!("{}:{}", name, dest.port)
             }
             Address::IP(ip) => {
-                format!("{}:{}", ip.to_string(), dest.port)
+                format!("{}:{}", ip, dest.port)
             }
         }
     }
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum SOCKS {
-    V4,
-    V5,
+    V4 = 4,
+    V5 = 5,
 }
 
 #[derive(Debug)]
+#[repr(u8)]
 pub enum SOCKS4Cmd {
-    Connect,
-    Bind,
+    Connect = 1,
+    Bind = 2,
 }
 
 #[derive(Debug)]
@@ -73,14 +83,36 @@ pub struct SOCKS5AuthRequest {
 }
 
 #[derive(Debug)]
-pub enum SOCKS5Cmd {
-    CONNECT,
-    BIND,
-    UDP,
+#[repr(u8)]
+pub enum SOCKS5AuthReply {
+    Accepted = 0,
+    Denied = 255,
 }
 
 #[derive(Debug)]
-pub struct SOCKS5ConnectionRequest {
+#[repr(u8)]
+pub enum SOCKS5Cmd {
+    Connect = 1,
+    Bind = 2,
+    UDP = 3,
+}
+
+#[derive(Debug)]
+pub struct SOCKS5ConnectRequest {
     pub cmd: SOCKS5Cmd,
     pub dest: Destination,
+}
+
+#[derive(Debug)]
+#[repr(u8)]
+pub enum SOCKS5ConnectReply {
+    Accepted = 0,
+    Failure = 1,
+    NotAllowed = 2,
+    NetworkUnreachable = 3,
+    HostUnreachable = 4,
+    ConnectionRefused = 5,
+    TTLExpired = 6,
+    CommandNotSupported = 7,
+    AddressTypeNotSupported = 8,
 }

@@ -90,9 +90,9 @@ fn socks5_cmd(i: &[u8]) -> IResult<&[u8], SOCKS5Cmd, MyError> {
 
     // 1 is connect, 2 is bind, 3 is udp
     if result[0] == 1 {
-        Ok((remaining, SOCKS5Cmd::CONNECT))
+        Ok((remaining, SOCKS5Cmd::Connect))
     } else if result[0] == 2 {
-        Ok((remaining, SOCKS5Cmd::BIND))
+        Ok((remaining, SOCKS5Cmd::Bind))
     } else {
         Ok((remaining, SOCKS5Cmd::UDP))
     }
@@ -190,7 +190,7 @@ pub fn socks5_auth_request(input: &[u8]) -> IResult<&[u8], SOCKS5AuthRequest, My
     Ok((remaining, SOCKS5AuthRequest { ver, id, pw }))
 }
 
-pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5ConnectionRequest, MyError> {
+pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5ConnectRequest, MyError> {
     let (remaining, (_, cmd, _, dest)) =
         tuple((socks5_ver, socks5_cmd, socks5_rsv, socks5_dst))(input)?;
 
@@ -198,5 +198,5 @@ pub fn socks5_connection_request(input: &[u8]) -> IResult<&[u8], SOCKS5Connectio
         return Err(Error(MyError::Parse));
     }
 
-    Ok((remaining, SOCKS5ConnectionRequest { cmd, dest }))
+    Ok((remaining, SOCKS5ConnectRequest { cmd, dest }))
 }

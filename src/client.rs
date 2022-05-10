@@ -1,10 +1,12 @@
-use crate::socks::SOCKS5AuthRequest;
+use crate::socks::{SOCKS5AuthReply, SOCKS5AuthRequest, SOCKS5ConnectReply};
 use crate::{
     socks5_auth_request, socks5_connection_request, socks_init, IoBufReader, MyError,
-    SOCKS5ConnectionRequest, SOCKSInit,
+    SOCKS5ConnectRequest, SOCKSInit,
 };
+use bytes::{BufMut, BytesMut};
 use nom_bufreader::AsyncParse;
 use replace_with::replace_with_or_abort;
+use std::net::{IpAddr, Ipv4Addr};
 use std::time::Duration;
 use tokio::io::{copy, split, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::TcpStream;
@@ -90,10 +92,6 @@ impl Client {
         }
     }
 
-    pub fn parser(&mut self) -> &mut IoBufReader<Compat<TcpStream>> {
-        self.connection.parser()
-    }
-
     async fn send(&mut self, msg: &[u8]) -> Result<(), MyError> {
         self.connection.default().write(msg).await?;
         Ok(())
@@ -142,7 +140,7 @@ impl Client {
         }
     }
 
-    pub async fn socks5_connection_request(&mut self) -> Result<SOCKS5ConnectionRequest, MyError> {
+    pub async fn socks5_connection_request(&mut self) -> Result<SOCKS5ConnectRequest, MyError> {
         match timeout(
             Duration::from_secs(120),
             self.connection.parser().parse(socks5_connection_request),
@@ -163,7 +161,37 @@ impl Client {
             msg[1] = 0x5B;
         }
 
-        self.send(msg.as_slice()).await?;
-        Ok(())
+        self.send(msg.as_slice()).await
+    }
+
+    pub async fn socks5_auth_reply(&mut self, r: SOCKS5AuthReply) -> Result<(), MyError> {
+        let msg = [5u8, r as u8];
+        self.send(msg.as_slice()).await
+    }
+
+    pub async fn socks5_connection_reply(
+        &mut self,
+        r: SOCKS5ConnectReply,
+        ip: Option<IpAddr>,
+        port: Option<u16>,
+    ) -> Result<(), MyError> {
+        let ip = ip.unwrap_or_else(|| IpAddr::V4(Ipv4Addr::new(0, 0, 0, 0)));
+        let port = port.unwrap_or(0);
+        match ip {
+            IpAddr::V4(ip) => {
+                let mut buf = BytesMut::with_capacity(10);
+                buf.extend([5u8, r as u8, 0, 1]);
+                buf.extend(ip.octets());
+                buf.put_u16(port);
+                self.send(&buf).await
+            }
+            IpAddr::V6(ip) => {
+                let mut buf = BytesMut::with_capacity(22);
+                buf.extend([5u8, r as u8, 0, 3]);
+                buf.extend(ip.octets());
+                buf.put_u16(port);
+                self.send(&buf).await
+            }
+        }
     }
 }
