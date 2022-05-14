@@ -1,12 +1,12 @@
 use std::net::IpAddr;
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub enum Address {
     Name(String),
     IP(IpAddr),
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Clone)]
 pub struct Destination {
     pub addr: Address,
     pub port: u16,
@@ -30,9 +30,9 @@ impl Destination {
     }
 }
 
-impl From<Destination> for String {
-    fn from(dest: Destination) -> Self {
-        match dest.addr {
+impl From<&Destination> for String {
+    fn from(dest: &Destination) -> Self {
+        match &dest.addr {
             Address::Name(name) => {
                 format!("{}:{}", name, dest.port)
             }
