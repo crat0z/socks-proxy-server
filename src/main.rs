@@ -9,14 +9,26 @@ mod socks;
 
 use crate::client::Client;
 use crate::error::MyError;
+use crate::server::Args;
 use crate::server::{Message, Server, Session};
+use clap::Parser;
+use std::net::SocketAddr;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() {
-    let listener = TcpListener::bind("127.0.0.1:8080").await.unwrap();
+    let args: Args = Args::parse();
 
-    let mut server = Server::new();
+    let socks4 = args.socks4;
+    let socks5 = args.socks5;
+
+    let socket = SocketAddr::new(args.ip, args.port);
+
+    let listener = TcpListener::bind(socket)
+        .await
+        .expect("Unable to bind to socket");
+
+    let mut server = Server::new(args);
 
     let s = server.send.clone();
 
@@ -29,7 +41,10 @@ async fn main() {
             Ok((stream, _)) => {
                 let send = s.clone();
                 tokio::spawn(async move {
-                    if let Err(e) = Client::new(stream, send).handle_connection().await {
+                    if let Err(e) = Client::new(stream, send)
+                        .handle_connection(socks4, socks5)
+                        .await
+                    {
                         dbg!("{}", e);
                     }
                 });

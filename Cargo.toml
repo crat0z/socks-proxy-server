@@ -14,3 +14,4 @@ futures-util = { version = "0", features = ["io"] }
 thiserror = "1"
 replace_with = "0"
 bytes = "1"
+clap = { version = "3", features = ["derive"] }

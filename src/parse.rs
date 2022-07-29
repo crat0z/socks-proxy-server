@@ -69,8 +69,20 @@ fn socks5_ver(i: &[u8]) -> IResult<&[u8], (), MyError> {
     Ok((remaining, ()))
 }
 
-fn socks5_auth_methods(i: &[u8]) -> IResult<&[u8], Vec<u8>, MyError> {
-    take_u8_len_vec(i)
+fn socks5_auth_methods(i: &[u8]) -> IResult<&[u8], Vec<SOCKS5AuthMethod>, MyError> {
+    let (remaining, raw) = take_u8_len_vec(i)?;
+
+    let mut ret = Vec::new();
+
+    for method in raw {
+        if method == 0 {
+            ret.push(SOCKS5AuthMethod::NoAuth);
+        } else if method == 2 {
+            ret.push(SOCKS5AuthMethod::UserPass);
+        }
+    }
+
+    Ok((remaining, ret))
 }
 
 fn socks5_auth_ver(i: &[u8]) -> IResult<&[u8], u8, MyError> {

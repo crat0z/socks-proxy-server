@@ -1,7 +1,8 @@
 use crate::parse::{socks5_auth_request, socks5_connection_request, socks_init};
+use crate::server::User;
 use crate::socks::{
-    SOCKS4Cmd, SOCKS4Init, SOCKS5AuthReply, SOCKS5AuthRequest, SOCKS5Cmd, SOCKS5ConnectReply,
-    SOCKS5ConnectRequest, SOCKS5Init, SOCKSInit,
+    SOCKS4Cmd, SOCKS4Init, SOCKS5AuthMethod, SOCKS5AuthReply, SOCKS5AuthRequest, SOCKS5Cmd,
+    SOCKS5ConnectReply, SOCKS5ConnectRequest, SOCKS5Init, SOCKSInit,
 };
 use crate::{Message, MyError, Session};
 use bytes::{BufMut, BytesMut};
@@ -10,6 +11,7 @@ use nom_bufreader::AsyncParse;
 use replace_with::replace_with_or_abort;
 use std::io::ErrorKind;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::io::{copy, split, AsyncWriteExt, ReadHalf, WriteHalf};
 use tokio::net::{TcpListener, TcpStream};
@@ -205,10 +207,22 @@ impl Client {
         }
     }
 
-    pub async fn handle_connection(&mut self) -> Result<(), MyError> {
+    pub async fn handle_connection(&mut self, socks4: bool, socks5: bool) -> Result<(), MyError> {
         match self.socks_init().await? {
-            SOCKSInit::V4(init) => self.handle_socks4(init).await,
-            SOCKSInit::V5(init) => self.handle_socks5(init).await,
+            SOCKSInit::V4(init) => {
+                if socks4 {
+                    self.handle_socks4(init).await
+                } else {
+                    Ok(())
+                }
+            }
+            SOCKSInit::V5(init) => {
+                if socks5 {
+                    self.handle_socks5(init).await
+                } else {
+                    Ok(())
+                }
+            }
         }
     }
 
@@ -244,136 +258,181 @@ impl Client {
     }
 
     async fn handle_socks5(&mut self, init: SOCKS5Init) -> Result<(), MyError> {
-        if init.auth_methods.contains(&0u8) {
-            self.socks5_auth_reply(SOCKS5AuthReply::Accepted).await?;
+        let auth_method = {
+            let auth_methods = Arc::new(init.auth_methods);
 
-            let req = self.socks5_connection_request().await?;
+            let mut receiver = self.sender.subscribe();
 
-            return match req.cmd {
-                SOCKS5Cmd::Connect => {
-                    match timeout(
-                        Duration::from_secs(120),
-                        TcpStream::connect(String::from(&req.dest)),
-                    )
-                    .await?
-                    {
-                        Ok(server) => {
-                            let msg = Session::new(self.default(), &server, req.dest);
+            self.sender
+                .send(Message::AuthMethodReq(auth_methods.clone()))
+                .unwrap();
 
-                            self.sender
-                                .send(Message::SessionStart(msg.clone()))
-                                .unwrap();
-
-                            let socket_addr = server.local_addr()?;
-                            self.socks5_connection_reply(
-                                SOCKS5ConnectReply::Accepted,
-                                Some(socket_addr.ip()),
-                                Some(socket_addr.port()),
-                            )
-                            .await?;
-
-                            self.run_connection(server).await?;
-
-                            self.sender.send(Message::SessionEnd(msg)).unwrap();
-                            Ok(())
-                        }
-                        Err(e) => {
-                            // should match on err.kind() instead
-
-                            let reply = match e.kind() {
-                                ErrorKind::ConnectionRefused => {
-                                    SOCKS5ConnectReply::ConnectionRefused
-                                }
-                                ErrorKind::HostUnreachable => SOCKS5ConnectReply::HostUnreachable,
-                                ErrorKind::NetworkUnreachable => {
-                                    SOCKS5ConnectReply::NetworkUnreachable
-                                }
-
-                                _ => SOCKS5ConnectReply::Failure,
-                            };
-
-                            self.socks5_connection_reply(reply, None, None).await?;
-
-                            Err(e.into())
+            let reply = {
+                loop {
+                    if let Ok(Message::AuthMethodReply(methods, selected)) = receiver.recv().await {
+                        if methods == auth_methods {
+                            break selected;
                         }
                     }
-                }
-                SOCKS5Cmd::Bind => {
-                    let addr_info;
-
-                    {
-                        let mut receiver = self.sender.subscribe();
-
-                        self.sender
-                            .send(Message::Request(req.dest.clone()))
-                            .unwrap();
-
-                        loop {
-                            if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
-                                if dest == req.dest {
-                                    addr_info = session.unwrap();
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    // bind to IP which remote can connect to
-
-                    match TcpListener::bind(SocketAddr::new(addr_info.server2remote.ip(), 0)).await
-                    {
-                        Ok(listener) => {
-                            let listen_addr = listener.local_addr().unwrap();
-
-                            self.socks5_connection_reply(
-                                SOCKS5ConnectReply::Accepted,
-                                Some(listen_addr.ip()),
-                                Some(listen_addr.port()),
-                            )
-                            .await?;
-
-                            match listener.accept().await {
-                                Ok((stream, socket)) => {
-                                    self.socks5_connection_reply(
-                                        SOCKS5ConnectReply::Accepted,
-                                        Some(socket.ip()),
-                                        Some(socket.port()),
-                                    )
-                                    .await?;
-
-                                    self.run_connection(stream).await?;
-                                }
-                                Err(e) => {
-                                    self.socks5_connection_reply(
-                                        SOCKS5ConnectReply::Failure,
-                                        None,
-                                        None,
-                                    )
-                                    .await?;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            self.socks5_connection_reply(SOCKS5ConnectReply::Failure, None, None)
-                                .await?;
-                        }
-                    }
-
-                    Ok(())
-                }
-                SOCKS5Cmd::UDP => {
-                    self.socks5_connection_reply(
-                        SOCKS5ConnectReply::CommandNotSupported,
-                        None,
-                        None,
-                    )
-                    .await?;
-                    Ok(())
                 }
             };
-        } else {
-            self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
-        }
-        Ok(())
+
+            if reply.is_none() {
+                self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
+                return Ok(());
+            }
+
+            reply.unwrap()
+        };
+
+        match auth_method {
+            SOCKS5AuthMethod::NoAuth => {
+                self.socks5_auth_reply(SOCKS5AuthReply::Accepted).await?;
+            }
+            SOCKS5AuthMethod::UserPass => {
+                self.socks5_auth_reply(SOCKS5AuthReply::UserPass).await?;
+
+                let client_auth = self.socks5_auth_request().await?;
+
+                if let (Ok(user), Ok(pass)) = (
+                    String::from_utf8(client_auth.id),
+                    String::from_utf8(client_auth.pw),
+                ) {
+                    let user = Arc::new(User { user, pass });
+
+                    let mut receiver = self.sender.subscribe();
+                    self.sender.send(Message::AuthRequst(user.clone())).unwrap();
+
+                    loop {
+                        if let Ok(Message::AuthReply(req, accepted)) = receiver.recv().await {
+                            if req == user {
+                                if accepted {
+                                    self.socks5_auth_reply(SOCKS5AuthReply::Accepted).await?;
+                                    break;
+                                } else {
+                                    self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
+                                    return Ok(());
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
+                }
+            }
+        };
+
+        let req = self.socks5_connection_request().await?;
+
+        return match req.cmd {
+            SOCKS5Cmd::Connect => {
+                match timeout(
+                    Duration::from_secs(120),
+                    TcpStream::connect(String::from(&req.dest)),
+                )
+                .await?
+                {
+                    Ok(server) => {
+                        let msg = Session::new(self.default(), &server, req.dest);
+
+                        self.sender
+                            .send(Message::SessionStart(msg.clone()))
+                            .unwrap();
+
+                        let socket_addr = server.local_addr()?;
+                        self.socks5_connection_reply(
+                            SOCKS5ConnectReply::Accepted,
+                            Some(socket_addr.ip()),
+                            Some(socket_addr.port()),
+                        )
+                        .await?;
+
+                        self.run_connection(server).await?;
+
+                        self.sender.send(Message::SessionEnd(msg)).unwrap();
+                        Ok(())
+                    }
+                    Err(e) => {
+                        // should match on err.kind() instead
+
+                        let reply = match e.kind() {
+                            ErrorKind::ConnectionRefused => SOCKS5ConnectReply::ConnectionRefused,
+                            ErrorKind::HostUnreachable => SOCKS5ConnectReply::HostUnreachable,
+                            ErrorKind::NetworkUnreachable => SOCKS5ConnectReply::NetworkUnreachable,
+
+                            _ => SOCKS5ConnectReply::Failure,
+                        };
+
+                        self.socks5_connection_reply(reply, None, None).await?;
+
+                        Err(e.into())
+                    }
+                }
+            }
+            SOCKS5Cmd::Bind => {
+                let addr_info = {
+                    let mut receiver = self.sender.subscribe();
+
+                    self.sender
+                        .send(Message::Request(req.dest.clone()))
+                        .unwrap();
+
+                    loop {
+                        if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
+                            if dest == req.dest {
+                                break session.unwrap();
+                            }
+                        }
+                    }
+                };
+
+                // bind to IP which remote can connect to
+
+                match TcpListener::bind(SocketAddr::new(addr_info.server2remote.ip(), 0)).await {
+                    Ok(listener) => {
+                        let listen_addr = listener.local_addr().unwrap();
+
+                        self.socks5_connection_reply(
+                            SOCKS5ConnectReply::Accepted,
+                            Some(listen_addr.ip()),
+                            Some(listen_addr.port()),
+                        )
+                        .await?;
+
+                        match listener.accept().await {
+                            Ok((stream, socket)) => {
+                                self.socks5_connection_reply(
+                                    SOCKS5ConnectReply::Accepted,
+                                    Some(socket.ip()),
+                                    Some(socket.port()),
+                                )
+                                .await?;
+
+                                self.run_connection(stream).await?;
+                            }
+                            Err(_) => {
+                                self.socks5_connection_reply(
+                                    SOCKS5ConnectReply::Failure,
+                                    None,
+                                    None,
+                                )
+                                .await?;
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        self.socks5_connection_reply(SOCKS5ConnectReply::Failure, None, None)
+                            .await?;
+                    }
+                }
+
+                Ok(())
+            }
+            SOCKS5Cmd::UDP => {
+                self.socks5_connection_reply(SOCKS5ConnectReply::CommandNotSupported, None, None)
+                    .await?;
+                Ok(())
+            }
+        };
     }
 }

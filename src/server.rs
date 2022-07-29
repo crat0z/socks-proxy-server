@@ -1,9 +1,66 @@
+use crate::error::MyError;
 use crate::socks::Destination;
+use crate::socks::SOCKS5AuthMethod;
+use clap::Parser;
+use std::net::IpAddr;
 use std::net::SocketAddr;
+use std::str::FromStr;
+use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio::sync::broadcast;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq)]
+pub struct User {
+    pub user: String,
+    pub pass: String,
+}
+
+impl FromStr for User {
+    type Err = MyError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let mut split = s.split(':');
+
+        if split.clone().count() != 2 {
+            Err(MyError::Parse)
+        } else {
+            Ok(User {
+                user: split.next().unwrap().to_owned(),
+                pass: split.next().unwrap().to_owned(),
+            })
+        }
+    }
+}
+
+#[derive(Parser, Debug)]
+#[clap(author, version, about, long_about = None)]
+pub struct Args {
+    /// IP to bind to
+    #[clap(short, long, default_value = "0.0.0.0")]
+    pub ip: IpAddr,
+
+    /// Port to bind to
+    #[clap(short, long, default_value_t = 8080u16)]
+    pub port: u16,
+
+    /// enable authentication. note that socks4 does not support authentication.
+    #[clap(short, long)]
+    auth: bool,
+
+    /// enable socks4
+    #[clap(long)]
+    pub socks4: bool,
+
+    /// enable socks5
+    #[clap(long)]
+    pub socks5: bool,
+
+    /// user:pass pairs for authentication
+    #[clap(short, long, required_if_eq("auth", "true"))]
+    users: Vec<User>,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Session {
     pub client2server: SocketAddr,
     pub server2client: SocketAddr,
@@ -30,20 +87,26 @@ pub enum Message {
     SessionEnd(Session),
     Request(Destination),
     Reply(Destination, Option<Session>),
+    AuthMethodReq(Arc<Vec<SOCKS5AuthMethod>>),
+    AuthMethodReply(Arc<Vec<SOCKS5AuthMethod>>, Option<SOCKS5AuthMethod>),
+    AuthRequst(Arc<User>),
+    AuthReply(Arc<User>, bool),
 }
 
 pub struct Server {
     active_sessions: Vec<Session>,
+    args: Args,
     pub recv: broadcast::Receiver<Message>,
     pub send: broadcast::Sender<Message>,
 }
 
 impl Server {
-    pub fn new() -> Self {
+    pub fn new(args: Args) -> Self {
         let (s, r) = broadcast::channel(16);
 
         Server {
             active_sessions: Vec::new(),
+            args,
             recv: r,
             send: s,
         }
@@ -81,7 +144,47 @@ impl Server {
                             self.send.send(Message::Reply(req, None)).unwrap();
                         }
                     }
+                    Message::AuthMethodReq(auths) => {
+                        if !self.args.auth && auths.contains(&SOCKS5AuthMethod::NoAuth) {
+                            self.send
+                                .send(Message::AuthMethodReply(
+                                    auths,
+                                    Some(SOCKS5AuthMethod::NoAuth),
+                                ))
+                                .unwrap();
+                        } else if self.args.auth && auths.contains(&SOCKS5AuthMethod::UserPass) {
+                            self.send
+                                .send(Message::AuthMethodReply(
+                                    auths,
+                                    Some(SOCKS5AuthMethod::UserPass),
+                                ))
+                                .unwrap();
+                        } else {
+                            self.send
+                                .send(Message::AuthMethodReply(auths, None))
+                                .unwrap();
+                        }
+                    }
+                    Message::AuthRequst(req) => {
+                        let mut found = false;
+                        for user in self.args.users.iter() {
+                            if req.as_ref() == user {
+                                self.send
+                                    .send(Message::AuthReply(req.clone(), true))
+                                    .unwrap();
+                                found = true;
+                                break;
+                            }
+                        }
+
+                        if !found {
+                            self.send.send(Message::AuthReply(req, false)).unwrap();
+                        }
+                    }
+
                     Message::Reply(_, _) => {}
+                    Message::AuthMethodReply(_, _) => {}
+                    Message::AuthReply(_, _) => {}
                 }
             }
         }

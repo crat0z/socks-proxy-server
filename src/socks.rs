@@ -1,12 +1,12 @@
 use std::net::IpAddr;
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub enum Address {
     Name(String),
     IP(IpAddr),
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Destination {
     pub addr: Address,
     pub port: u16,
@@ -64,9 +64,15 @@ pub struct SOCKS4Init {
     pub dest: Destination,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SOCKS5AuthMethod {
+    NoAuth,
+    UserPass,
+}
+
 #[derive(Debug)]
 pub struct SOCKS5Init {
-    pub auth_methods: Vec<u8>,
+    pub auth_methods: Vec<SOCKS5AuthMethod>,
 }
 
 #[derive(Debug)]
@@ -86,6 +92,7 @@ pub struct SOCKS5AuthRequest {
 #[repr(u8)]
 pub enum SOCKS5AuthReply {
     Accepted = 0,
+    UserPass = 2,
     Denied = 255,
 }
 
