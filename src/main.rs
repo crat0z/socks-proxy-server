@@ -19,6 +19,8 @@ use tokio::net::TcpListener;
 async fn main() {
     let args: Args = Args::parse();
 
+    dbg!(&args);
+
     let socks4 = args.socks4;
     let socks5 = args.socks5;
 

@@ -101,7 +101,7 @@ pub enum SOCKS5AuthReply {
 pub enum SOCKS5Cmd {
     Connect = 1,
     Bind = 2,
-    UDP = 3,
+    Udp = 3,
 }
 
 #[derive(Debug)]
@@ -115,11 +115,11 @@ pub struct SOCKS5ConnectRequest {
 pub enum SOCKS5ConnectReply {
     Accepted = 0,
     Failure = 1,
-    NotAllowed = 2,
+    // NotAllowed = 2,
     NetworkUnreachable = 3,
     HostUnreachable = 4,
     ConnectionRefused = 5,
-    TTLExpired = 6,
+    // TTLExpired = 6,
     CommandNotSupported = 7,
-    AddressTypeNotSupported = 8,
+    // AddressTypeNotSupported = 8,
 }

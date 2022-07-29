@@ -505,7 +505,7 @@ impl Client {
 
                 Ok(())
             }
-            SOCKS5Cmd::UDP => {
+            SOCKS5Cmd::Udp => {
                 self.socks5_connection_reply(SOCKS5ConnectReply::CommandNotSupported, None, None)
                     .await?;
                 Ok(())

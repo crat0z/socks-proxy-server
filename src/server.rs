@@ -1,7 +1,7 @@
 use crate::error::MyError;
 use crate::socks::Destination;
 use crate::socks::SOCKS5AuthMethod;
-use clap::Parser;
+use clap::{ArgGroup, Parser};
 use std::net::IpAddr;
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -34,6 +34,7 @@ impl FromStr for User {
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
+#[clap(group(ArgGroup::new("protos").multiple(true).required(true).args(&["socks4", "socks5"])))]
 pub struct Args {
     /// IP to bind to
     #[clap(short, long, default_value = "0.0.0.0")]
@@ -44,7 +45,7 @@ pub struct Args {
     pub port: u16,
 
     /// enable authentication. note that socks4 does not support authentication.
-    #[clap(short, long)]
+    #[clap(short, long, requires_all(&["socks5", "users"]))]
     auth: bool,
 
     /// enable socks4
@@ -56,8 +57,8 @@ pub struct Args {
     pub socks5: bool,
 
     /// user:pass pairs for authentication
-    #[clap(short, long, required_if_eq("auth", "true"))]
-    users: Vec<User>,
+    #[clap(short, long)]
+    users: Option<Vec<User>>,
 }
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -167,7 +168,8 @@ impl Server {
                     }
                     Message::AuthRequst(req) => {
                         let mut found = false;
-                        for user in self.args.users.iter() {
+
+                        for user in self.args.users.as_ref().unwrap().iter() {
                             if req.as_ref() == user {
                                 self.send
                                     .send(Message::AuthReply(req.clone(), true))

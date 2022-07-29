@@ -106,7 +106,7 @@ fn socks5_cmd(i: &[u8]) -> IResult<&[u8], SOCKS5Cmd, MyError> {
     } else if result[0] == 2 {
         Ok((remaining, SOCKS5Cmd::Bind))
     } else {
-        Ok((remaining, SOCKS5Cmd::UDP))
+        Ok((remaining, SOCKS5Cmd::Udp))
     }
 }
 
