@@ -164,16 +164,31 @@ impl Client {
         }
     }
 
-    pub async fn socks4_connect_reply(&mut self, accepted: bool) -> Result<(), MyError> {
-        let mut msg = [0u8; 8];
+    pub async fn socks4_connect_reply(
+        &mut self,
+        accepted: bool,
+        ip: Option<Ipv4Addr>,
+        port: Option<u16>,
+    ) -> Result<(), MyError> {
+        let mut msg = BytesMut::with_capacity(8);
 
+        msg.put_u8(0);
         if accepted {
-            msg[1] = 0x5A;
+            msg.put_u8(0x5A);
         } else {
-            msg[1] = 0x5B;
+            msg.put_u8(0x5B);
         }
 
-        self.send(msg.as_slice()).await
+        if ip.is_some() {
+            let ip = ip.unwrap();
+            let port = port.unwrap();
+            msg.extend(ip.octets());
+            msg.put_u16(port);
+        } else {
+            msg.extend([0, 0, 0, 0, 0, 0]);
+        }
+
+        self.send(&msg).await
     }
 
     pub async fn socks5_auth_reply(&mut self, r: SOCKS5AuthReply) -> Result<(), MyError> {
@@ -238,20 +253,73 @@ impl Client {
                 {
                     Ok(forward) => {
                         // connection accepted
-                        self.socks4_connect_reply(true).await?;
+                        self.socks4_connect_reply(true, None, None).await?;
                         self.run_connection(forward).await?;
 
                         Ok(())
                     }
                     Err(e) => {
                         // connection failed
-                        self.socks4_connect_reply(false).await?;
+                        self.socks4_connect_reply(false, None, None).await?;
                         Err(e.into())
                     }
                 }
             }
             SOCKS4Cmd::Bind => {
-                self.socks4_connect_reply(false).await?;
+                let addr_info = {
+                    let mut receiver = self.sender.subscribe();
+                    self.sender
+                        .send(Message::Request(init.dest.clone()))
+                        .unwrap();
+
+                    loop {
+                        if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
+                            if dest == init.dest {
+                                break session;
+                            }
+                        }
+                    }
+                };
+
+                if addr_info.is_none() {
+                    self.socks4_connect_reply(false, None, None).await?;
+                    return Ok(());
+                }
+
+                let addr_info = addr_info.unwrap();
+
+                match addr_info.server2remote.ip() {
+                    IpAddr::V4(ip) => {
+                        match TcpListener::bind(SocketAddr::new(ip.into(), 0)).await {
+                            Ok(listener) => {
+                                let listen_addr = listener.local_addr().unwrap();
+
+                                self.socks4_connect_reply(true, Some(ip), Some(listen_addr.port()))
+                                    .await?;
+
+                                match listener.accept().await {
+                                    Ok((stream, _)) => {
+                                        self.socks4_connect_reply(true, None, None).await?;
+
+                                        self.run_connection(stream).await?;
+                                    }
+                                    Err(_) => {
+                                        self.socks4_connect_reply(false, None, None).await?;
+                                    }
+                                }
+                            }
+                            Err(_) => {
+                                self.socks4_connect_reply(false, None, None).await?;
+                            }
+                        }
+                    }
+                    IpAddr::V6(_) => {
+                        // only support ipv4
+                        self.socks4_connect_reply(false, None, None).await?;
+                        return Ok(());
+                    }
+                }
+
                 Ok(())
             }
         }
@@ -380,15 +448,24 @@ impl Client {
                     loop {
                         if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
                             if dest == req.dest {
-                                break session.unwrap();
+                                break session;
                             }
                         }
                     }
                 };
 
+                if addr_info.is_none() {
+                    self.socks5_connection_reply(SOCKS5ConnectReply::Failure, None, None)
+                        .await?;
+
+                    return Ok(());
+                }
+
                 // bind to IP which remote can connect to
 
-                match TcpListener::bind(SocketAddr::new(addr_info.server2remote.ip(), 0)).await {
+                match TcpListener::bind(SocketAddr::new(addr_info.unwrap().server2remote.ip(), 0))
+                    .await
+                {
                     Ok(listener) => {
                         let listen_addr = listener.local_addr().unwrap();
 
