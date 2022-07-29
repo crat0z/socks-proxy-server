@@ -268,13 +268,16 @@ impl Client {
             SOCKS4Cmd::Bind => {
                 let addr_info = {
                     let mut receiver = self.sender.subscribe();
+
+                    let orig_dest = Arc::new(init.dest);
+
                     self.sender
-                        .send(Message::Request(init.dest.clone()))
+                        .send(Message::Request(orig_dest.clone()))
                         .unwrap();
 
                     loop {
                         if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
-                            if dest == init.dest {
+                            if dest == orig_dest {
                                 break session;
                             }
                         }
@@ -441,13 +444,14 @@ impl Client {
                 let addr_info = {
                     let mut receiver = self.sender.subscribe();
 
+                    let orig_dest = Arc::new(req.dest);
                     self.sender
-                        .send(Message::Request(req.dest.clone()))
+                        .send(Message::Request(orig_dest.clone()))
                         .unwrap();
 
                     loop {
                         if let Ok(Message::Reply(dest, session)) = receiver.recv().await {
-                            if dest == req.dest {
+                            if dest == orig_dest {
                                 break session;
                             }
                         }

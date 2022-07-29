@@ -34,7 +34,6 @@ impl FromStr for User {
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
-#[clap(group(ArgGroup::new("protos").multiple(true).required(true).args(&["socks4", "socks5"])))]
 pub struct Args {
     /// IP to bind to
     #[clap(short, long, default_value = "0.0.0.0")]
@@ -44,20 +43,21 @@ pub struct Args {
     #[clap(short, long, default_value_t = 8080u16)]
     pub port: u16,
 
-    /// enable authentication. note that socks4 does not support authentication.
-    #[clap(short, long, requires_all(&["socks5", "users"]))]
-    auth: bool,
-
-    /// enable socks4
+    /// Enable socks4
     #[clap(long)]
     pub socks4: bool,
 
-    /// enable socks5
+    /// Enable socks5
     #[clap(long)]
     pub socks5: bool,
 
+    /// Require authentication. Note that socks4 does not support authentication.
+    /// --users and --socks5 are required if authentication is enabled.
+    #[clap(short, long, requires_all(&["socks5", "users"]))]
+    auth: bool,
+
     /// user:pass pairs for authentication
-    #[clap(short, long)]
+    #[clap(short, long, multiple_values(true))]
     users: Option<Vec<User>>,
 }
 
@@ -86,8 +86,8 @@ impl Session {
 pub enum Message {
     SessionStart(Session),
     SessionEnd(Session),
-    Request(Destination),
-    Reply(Destination, Option<Session>),
+    Request(Arc<Destination>),
+    Reply(Arc<Destination>, Option<Session>),
     AuthMethodReq(Arc<Vec<SOCKS5AuthMethod>>),
     AuthMethodReply(Arc<Vec<SOCKS5AuthMethod>>, Option<SOCKS5AuthMethod>),
     AuthRequst(Arc<User>),
@@ -132,7 +132,7 @@ impl Server {
                         let mut found = false;
 
                         for v in self.active_sessions.iter() {
-                            if v.destination == req {
+                            if v.destination == *req {
                                 found = true;
                                 self.send
                                     .send(Message::Reply(req.clone(), Some(v.clone())))
