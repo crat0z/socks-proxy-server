@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0", features = ["compat"] }
-nom-bufreader = { features = ["async"] }
+nom-bufreader = { version = "0", features = ["async"] }
 nom = "7"
 futures-util = { version = "0", features = ["io"] }
 thiserror = "1"

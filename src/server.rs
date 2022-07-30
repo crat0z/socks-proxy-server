@@ -34,6 +34,7 @@ impl FromStr for User {
 
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
+#[clap(group(ArgGroup::new("protos").multiple(true).required(true).args(&["socks4", "socks5"])))]
 pub struct Args {
     /// IP to bind to
     #[clap(short, long, default_value = "0.0.0.0")]
