@@ -13,7 +13,10 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
 use crate::error::MyError;
 use crate::socks::Address::IP;
-use crate::socks::*;
+use crate::socks::{
+    Address, Destination, SOCKS4Cmd, SOCKS4Init, SOCKS5AuthMethod, SOCKS5AuthRequest, SOCKS5Cmd,
+    SOCKS5ConnectRequest, SOCKS5Init, SOCKSInit, SOCKS,
+};
 
 fn take_until_null_consume(i: &[u8]) -> IResult<&[u8], &[u8], MyError> {
     let (remaining, result) = take_until("\0")(i)?;

@@ -21,13 +21,13 @@ impl FromStr for User {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut split = s.split(':');
 
-        if split.clone().count() != 2 {
-            Err(MyError::Parse)
-        } else {
+        if split.clone().count() == 2 {
             Ok(User {
                 user: split.next().unwrap().to_owned(),
                 pass: split.next().unwrap().to_owned(),
             })
+        } else {
+            Err(MyError::Parse)
         }
     }
 }
@@ -132,7 +132,7 @@ impl Server {
                     Message::Request(req) => {
                         let mut found = false;
 
-                        for v in self.active_sessions.iter() {
+                        for v in &self.active_sessions {
                             if v.destination == *req {
                                 found = true;
                                 self.send
@@ -185,9 +185,7 @@ impl Server {
                         }
                     }
 
-                    Message::Reply(_, _) => {}
-                    Message::AuthMethodReply(_, _) => {}
-                    Message::AuthReply(_, _) => {}
+                    _ => {}
                 }
             }
         }

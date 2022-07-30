@@ -380,10 +380,9 @@ impl Client {
                                 if accepted {
                                     self.socks5_auth_reply(SOCKS5AuthReply::Accepted).await?;
                                     break;
-                                } else {
-                                    self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
-                                    return Ok(());
                                 }
+                                self.socks5_auth_reply(SOCKS5AuthReply::Denied).await?;
+                                return Ok(());
                             }
                         }
                     }
